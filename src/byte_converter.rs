@@ -18,6 +18,12 @@ use crate::logs::StdLogger;
 #[cfg(feature = "std")]
 pub const LOG: StdLogger = StdLogger;
 
+pub enum FixeArrayError {
+    OutOfTheBounds,
+    FullCapacity,
+    ElementNotFound,
+}
+
 // Vec<> alternative for no_std. I know that we can still use Vec<> from core crate, but for small window size inputs
 // it`s better to use fixed static array saved on stack, so we are not slow down by accessing heap.
 pub struct FixedArray<T, const N: usize> {
@@ -25,12 +31,7 @@ pub struct FixedArray<T, const N: usize> {
     counter: usize,
 }
 
-pub enum FixeArrayError {
-    OutOfTheBounds,
-    FullCapacity,
-    ElementNotFound,
-}
-
+// constructor
 impl<T: Default + Copy, const N: usize> FixedArray<T, N> {
     pub fn new() -> Self {
         Self {
@@ -64,20 +65,21 @@ impl<T: Default + Copy, const N: usize> FixedArray<T, N> {
         unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(start), len) }
     }
 
-    // clear whole array
+    // clear whole array with default values
     pub fn clear(&mut self) {
         self.counter = 0;
         self.data.fill(T::default());
     }
 
+    // check if array is empty
     pub fn is_empty(&self) -> bool {
-        if self.counter <= 0 {
+        if self.counter == 0 {
             return true;
         }
         false
     }
 
-    // it should iter through array and get sum of all values
+    // array iterater
     pub fn iter(&self) -> Iter<T> {
         self.data[..self.counter].iter()
     }
@@ -86,13 +88,46 @@ impl<T: Default + Copy, const N: usize> FixedArray<T, N> {
         self.counter
     }
 
-    // do not handle adding elements up to the available space and then return an error
-    // or a partial success indication.
-    // possible feature for upgrade.
+    /*
+        In order to distinguish between slice and array extending, because of current len difference
+        Throw error if there are more elements that free size in array.
+        For now it doesn`t fill array partially, but throw error
+    */
     pub fn extend_by_slice(&mut self, slice: &[T]) -> Result<(), FixeArrayError> {
         let size = slice.len();
         let free_size = N - self.counter;
-        if size <= 0 {
+
+        if size == 0 {
+            LOG.error("slice has no element");
+            return Err(FixeArrayError::ElementNotFound);
+        }
+
+        if size > N {
+            LOG.error("slice size is bigger that size of array, can`t add all elements");
+            return Err(FixeArrayError::OutOfTheBounds);
+        }
+
+        if size > free_size {
+            LOG.error("slice size is bigger that size of array, can`t add all elements");
+            return Err(FixeArrayError::OutOfTheBounds);
+        } else {
+            for item in slice.iter().take(size) {
+                self.data[self.counter] = *item;
+                self.counter += 1;
+            }
+        }
+
+        Ok(())
+    }
+
+    // extending fixed array if possible.
+    // Throw error if there are more elements that free size in array.
+    // For now it doesn`t fill array partially, but throw error
+    pub fn extend_by_array(&mut self, array: &FixedArray<T, N>) -> Result<(), FixeArrayError> {
+        let size = array.len();
+        let free_size = N - self.counter;
+
+        if size == 0 {
             LOG.error("slice has no element");
             return Err(FixeArrayError::ElementNotFound);
         }
@@ -109,38 +144,12 @@ impl<T: Default + Copy, const N: usize> FixedArray<T, N> {
             return Err(FixeArrayError::FullCapacity);
         } else {
             for i in 0..size {
-                self.data[self.counter] = slice[i];
-                self.counter += 1;
-            }
-            Ok(())
-        }
-    }
-
-    pub fn extend_by_array(&mut self, array: &FixedArray<T, N>) -> Result<(), FixeArrayError> {
-        let size = array.len();
-        let free_size = N - self.counter;
-        if size <= 0 {
-            LOG.error("slice has no element");
-            return Err(FixeArrayError::ElementNotFound);
-        }
-
-        if size > N {
-            LOG.error("slice size is bigger that size of array, can`t add all elements");
-            return Err(FixeArrayError::OutOfTheBounds);
-        }
-
-        if size > free_size {
-            LOG.error(
-                "capacity of array would be exceeted, try to delete old data in array and continue",
-            );
-            return Err(FixeArrayError::FullCapacity);
-        } else {
-            for i in 0..free_size {
                 self.data[self.counter] = array.data[i];
                 self.counter += 1;
             }
-            Ok(())
         }
+
+        Ok(())
     }
 }
 pub struct ByteConverter {
@@ -162,7 +171,7 @@ impl ByteConverter {
     pub fn init(window_size: usize) -> ByteConverter {
         if window_size > 0 {
             ByteConverter {
-                window_size: window_size,
+                window_size,
                 buf_last: FixedArray::<i32, 255>::new(),
                 buf_current: FixedArray::<i32, 255>::new(),
                 buf_remainder: FixedArray::<u8, 4>::new(),
@@ -182,6 +191,7 @@ impl ByteConverter {
         }
     }
 
+    // pub methods for private values
     pub fn get_window_size(&self) -> usize {
         self.window_size * 4
     }
@@ -190,6 +200,7 @@ impl ByteConverter {
         &self.sum
     }
 
+    // get current instance of buffer
     pub fn get_buf(&self) -> &FixedArray<i32, 255> {
         &self.buf_current
     }
@@ -211,7 +222,7 @@ impl ByteConverter {
         let max_size = cmp::min(buf.len(), window_size);
         let mut slice = buf[start_index..max_size].chunks_exact(4);
 
-        for chunk in slice.by_ref().into_iter() {
+        for chunk in slice.by_ref() {
             let value = LittleEndian::read_i32(chunk);
             self.buf_current.push(value);
             self.sum += value;
@@ -229,7 +240,7 @@ impl ByteConverter {
         let max_size = cmp::min(buf.len(), window_size);
         let mut slice = buf[start_index..max_size].chunks_exact(4);
 
-        for chunk in slice.by_ref().into_iter() {
+        for chunk in slice.by_ref() {
             let value = BigEndian::read_i32(chunk);
             self.buf_current.push(value);
             self.sum += value;
@@ -255,7 +266,7 @@ impl ByteConverter {
                         let mut r_byte = FixedArray::<u8, 4>::new();
                         _ = r_byte.extend_by_slice(fist_part);
                         _ = r_byte.extend_by_slice(sec_part);
-                        return Some(r_byte);
+                        Some(r_byte)
                     } else {
                         LOG.warn("cannot happend, because we are checking buf input at the start of conversion");
                         None
@@ -271,7 +282,7 @@ impl ByteConverter {
                         let mut r_byte = FixedArray::<u8, 4>::new();
                         _ = r_byte.extend_by_slice(fist_part);
                         _ = r_byte.extend_by_slice(sec_part);
-                        return Some(r_byte);
+                        Some(r_byte)
                     } else {
                         LOG.warn("cannot happend, because we are checking buf input at the start of conversion");
                         None
@@ -287,7 +298,7 @@ impl ByteConverter {
                         let mut r_byte = FixedArray::<u8, 4>::new();
                         _ = r_byte.extend_by_slice(fist_part);
                         _ = r_byte.extend_by_slice(sec_part);
-                        return Some(r_byte);
+                        Some(r_byte)
                     } else {
                         LOG.warn("cannot happend, because we are checking buf input at the start of conversion");
                         None
@@ -310,27 +321,23 @@ impl ByteConverter {
     pub fn convert_bytes_to_i32(&mut self, buf: &[u8]) {
         // split bytes sequence by 4
 
-        // basically we need only 8 bytes for mean(), but for now we don`t support less numbers in
-        // first call then window_size. Otherwise we would need to adjust old value adding
+        // basically we need at least 8 bytes for mean(), but for now we don`t support less numbers in
+        // first call then window_size.
         if self.buf_remainder.is_empty() {
             if buf.len() < 8 {
                 LOG.warn("first call doesn`t have enough values for making statistics");
+            } else if buf[0] > buf[3] {
+                // if there are more values on the input it will be skipped
+                self.read_little_endians(buf, 0);
             } else {
-                if buf[0] > buf[3] {
-                    // if there are more values on the input it will be skipped
-                    self.read_little_endians(buf, 0);
-                } else {
-                    // if there are more values on the input it will be skipped
-                    self.read_big_endians(buf, 0);
-                }
+                // if there are more values on the input it will be skipped
+                self.read_big_endians(buf, 0);
             }
         } else {
             // Next write call.
             // Take a look into self.buf_remainder and try to reconstruct i32 from next write call
-            // TODO add r_byte into struct and return num of bytes grabed from input buf
-            if let Some(r_byte) = self.reconstruct_i32_bytes(&buf) {
+            if let Some(r_byte) = self.reconstruct_i32_bytes(buf) {
                 if r_byte.data[0] > r_byte.data[3] {
-                    // TODO refactor me
                     let value = LittleEndian::read_i32(r_byte.data.get(..).unwrap());
                     self.buf_current.push(value);
                     self.sum += value;
@@ -338,7 +345,6 @@ impl ByteConverter {
                     // after we add r_bytes we need to skip reconstructed bytes and adjust window_size
                     self.read_little_endians(buf, 4 - self.buf_remainder.len());
                 } else {
-                    // TODO refactor me
                     let value = BigEndian::read_i32(r_byte.data.get(..).unwrap());
                     self.buf_current.push(value);
                     self.sum += value;

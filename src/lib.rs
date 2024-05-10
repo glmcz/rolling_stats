@@ -5,7 +5,12 @@ use rand_distr::{Distribution, Normal};
 
 mod byte_converter;
 mod logs;
+#[cfg(feature = "std")]
 use crate::byte_converter::LOG;
+
+#[cfg(not(feature = "std"))]
+use crate::byte_converter::LOG;
+
 use crate::logs::Logger;
 
 #[cfg(feature = "std")]
@@ -70,10 +75,10 @@ impl RollingStats {
             LOG.error("std_deviation can`t be computed from empty buf_current");
             return 0.0;
         }
-        
+
         let mut rng = thread_rng();
         let normal_dis = Normal::new(self.mean, self.std_dev).unwrap();
-        self.std_dis_samle = normal_dis.sample(&mut rng).clone();
+        self.std_dis_samle = normal_dis.sample(&mut rng);
         self.std_dis_samle
     }
 
@@ -86,7 +91,7 @@ impl RollingStats {
         self.std_dis_samle = 0.0;
         self.input_i32.clear_buf();
 
-        if buf.len() > 0 {
+        if !buf.is_empty() {
             // need at leat 2 (bytes) values in first call to do statistics, in second call we need at least 1 byte
             self.input_i32.convert_bytes_to_i32(buf);
         } else {
@@ -110,7 +115,7 @@ impl std::io::Write for RollingStats {
             // need at leat 2 (bytes) values in first call to do statistics, in second call we need at least 1 byte
             self.input_i32.convert_bytes_to_i32(buf);
         } else {
-            std_error("can`t proceed with empty value. Put at least one bytes into the write input")
+            LOG.error("can`t proceed with empty value. Put at least one bytes into the write input")
         }
         Ok(self.input_i32.get_buf().len() * 4)
     }
@@ -123,8 +128,8 @@ impl std::io::Write for RollingStats {
 #[cfg(test)]
 #[cfg(feature = "std")]
 mod tests {
-    use std::io::Write;
     use crate::std::string::ToString;
+    use std::io::Write;
 
     use super::*;
 
@@ -135,7 +140,7 @@ mod tests {
         _ = stats.write(&[0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4]);
         assert_eq!(stats.mean(), 2.0);
         assert_eq!(stats.std_deviation(), 0.816496611);
-        std_info(stats.std_distribution().to_string().as_str());
+        LOG.info(stats.std_distribution().to_string().as_str());
     }
 
     #[test]
@@ -206,8 +211,8 @@ mod tests {
 
 #[cfg(test)]
 #[cfg(not(feature = "std"))]
-mod tests_no_std {    
-   use super::RollingStats;
+mod tests_no_std {
+    use super::RollingStats;
 
     // it work
     #[test]

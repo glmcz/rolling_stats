@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+        - uses: actions/checkout@v4
+        - name: Make install
+          run: apt update && apt install make
+        - name: Install Rust
+          uses: actions-rs/toolchain@v1
+          with:
+            toolchain: stable
+            override: true
+            
+        - name: Build and test no_std env
+          run: make build && make test && make clean
+            
+        - name: Build and test std env 
+          run: make build-std && make test-std
+
+    # fmt:
+    #     name: Rustfmt
+    #     runs-on: ubuntu-latest
+    #     steps:
+    #     - uses: actions/checkout@v2
+    #     - uses: actions-rs/toolchain@v1
+    #       with:
+    #         profile: minimal
+    #         toolchain: stable
+    #         override: true
+    #     - run: rustup component add rustfmt
+    #     - uses: actions-rs/cargo@v1
+    #       with:
+    #         command: fmt
+    #         args: --all -- --check

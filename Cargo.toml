@@ -10,7 +10,7 @@ edition = "2021"
 name = "lib"
 
 [features]
-default = ["std"]   # Default to using the std
+default = []   # Default no_std
 std = []
 
 [dependencies]

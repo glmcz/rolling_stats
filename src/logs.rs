@@ -1,9 +1,7 @@
-
 use core::str;
 
 #[cfg(feature = "std")]
 use log::{error, info, warn};
-
 
 pub trait Logger {
     fn error(&self, msg: &str);
@@ -35,17 +33,17 @@ impl Logger for StdLogger {
 #[cfg(not(feature = "std"))]
 impl Logger for NoStdLogger {
     fn error(&self, msg: &str) {
-       // write into file or to the serial so we can see debug msg
-       //todo!();
+        // write into file or to the serial so we can see debug msg
+        //todo!();
     }
 
     fn warn(&self, msg: &str) {
-         // write into file or to the serial so we can see debug msg
-       //todo!();
+        // write into file or to the serial so we can see debug msg
+        //todo!();
     }
 
     fn info(&self, msg: &str) {
-       // write into file or to the serial so we can see debug msg
-       //todo!();
+        // write into file or to the serial so we can see debug msg
+        //todo!();
     }
 }
