@@ -4,12 +4,13 @@ use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 
 mod byte_converter;
+mod logs;
+use crate::byte_converter::LOG;
+use crate::logs::Logger;
 
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "std")]
-use byte_converter::{std_error, std_info, std_warn};
 // goal is to save int32 user input until it reach user defined windows size.
 // input should be as sequence of bytes.
 // and each byte can have value -128 up to 255.
@@ -49,7 +50,7 @@ impl RollingStats {
     fn std_deviation(&mut self) -> f32 {
         // should never reach
         if self.input_i32.get_buf().is_empty() {
-            std_error("std_deviation can`t be computed from empty buf_current");
+            byte_converter::LOG.error("std_deviation can`t be computed from empty buf_current");
             return 0.0;
         }
         let mut square_diffs = 0.0; // need to square because diff can have pos or neg sign
@@ -66,10 +67,10 @@ impl RollingStats {
     fn std_distribution(&mut self) -> f32 {
         // should never reach
         if self.input_i32.get_buf().is_empty() {
-            std_error("std_deviation can`t be computed from empty buf_current");
+            LOG.error("std_deviation can`t be computed from empty buf_current");
             return 0.0;
         }
-
+        
         let mut rng = thread_rng();
         let normal_dis = Normal::new(self.mean, self.std_dev).unwrap();
         self.std_dis_samle = normal_dis.sample(&mut rng).clone();
@@ -115,8 +116,7 @@ impl std::io::Write for RollingStats {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        // fix my error handling
-        Ok(())
+        todo!();
     }
 }
 
@@ -216,6 +216,6 @@ mod tests_no_std {
         _ = stats.write_no_std(&[0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4]);
         assert_eq!(stats.mean(), 2.0);
         assert_eq!(stats.std_deviation(), 0.816496611);
-        std_info(stats.std_distribution());
+        assert_ne!(stats.std_distribution(), 0.0);
     }
 }

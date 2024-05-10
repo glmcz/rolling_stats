@@ -1,47 +1,41 @@
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use core::cmp;
-use log::{error, info, warn}; // can`t by used in no_std
+
 use core::default::Default;
 use core::marker::Copy;
 use core::slice::Iter;
 
+use crate::logs::Logger;
+
 // in no_std we have not stdout, stderr output so we need to use logger only in std environment.
+#[cfg(not(feature = "std"))]
+use crate::logs::NoStdLogger;
+#[cfg(not(feature = "std"))]
+pub const LOG: NoStdLogger = NoStdLogger;
 
 #[cfg(feature = "std")]
-pub fn std_error(msg: &str) {
-    error!("{}", &msg);
-}
-
-
+use crate::logs::StdLogger;
 #[cfg(feature = "std")]
-pub fn std_warn(msg: &str) {
-    warn!("{}", &msg);
-}
+pub const LOG: StdLogger = StdLogger;
 
-
-#[cfg(feature = "std")]
-pub fn std_info(msg: &str) {
-    info!("{}", &msg);
-}
 // Vec<> alternative for no_std. I know that we can still use Vec<> from core crate, but for small window size inputs
 // it`s better to use fixed static array saved on stack, so we are not slow down by accessing heap.
 pub struct FixedArray<T, const N: usize> {
     data: [T; N],
-    counter: usize
+    counter: usize,
 }
 
 pub enum FixeArrayError {
     OutOfTheBounds,
     FullCapacity,
     ElementNotFound,
-
 }
 
-impl<T: Default+ Copy, const N: usize> FixedArray<T, N> {
+impl<T: Default + Copy, const N: usize> FixedArray<T, N> {
     pub fn new() -> Self {
-        Self { 
+        Self {
             data: [T::default(); N],
-            counter: 0
+            counter: 0,
         }
     }
 
@@ -50,26 +44,24 @@ impl<T: Default+ Copy, const N: usize> FixedArray<T, N> {
         if self.counter < N {
             self.data[self.counter] = element;
             self.counter += 1;
-        }else {
-            std_error("array is out of the bounds");
+        } else {
+            LOG.error("array is out of the bounds");
         }
     }
 
-     // get element from fixed array
+    // get element from fixed array
     pub fn get(&self, range: core::ops::Range<usize>) -> Option<&[T]> {
         if range.start <= range.end && range.end <= N {
             let len = range.end - range.start;
             Some(self.slice(range.start, len))
-        }else {
-           None
+        } else {
+            None
         }
     }
 
     // helper fn for slice in get method
-    fn slice(&self, start: usize, len : usize) -> &[T] {
-        unsafe {
-            core::slice::from_raw_parts(self.data.as_ptr().add(start), len)
-        }
+    fn slice(&self, start: usize, len: usize) -> &[T] {
+        unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(start), len) }
     }
 
     // clear whole array
@@ -94,28 +86,29 @@ impl<T: Default+ Copy, const N: usize> FixedArray<T, N> {
         self.counter
     }
 
-    // do not handle adding elements up to the available space and then return an error 
+    // do not handle adding elements up to the available space and then return an error
     // or a partial success indication.
     // possible feature for upgrade.
     pub fn extend_by_slice(&mut self, slice: &[T]) -> Result<(), FixeArrayError> {
         let size = slice.len();
         let free_size = N - self.counter;
         if size <= 0 {
-            std_error("slice has no element");
-            return Err(FixeArrayError::ElementNotFound)
+            LOG.error("slice has no element");
+            return Err(FixeArrayError::ElementNotFound);
         }
 
-        if size > N{
-            std_error("slice size is bigger that size of array, can`t add all elements");
-            return Err(FixeArrayError::OutOfTheBounds)
+        if size > N {
+            LOG.error("slice size is bigger that size of array, can`t add all elements");
+            return Err(FixeArrayError::OutOfTheBounds);
         }
 
         if size > free_size {
-            std_error("capacity of array would be exceeted, try to delete old data in array and continue");
+            LOG.error(
+                "capacity of array would be exceeted, try to delete old data in array and continue",
+            );
             return Err(FixeArrayError::FullCapacity);
-        }
-        else {
-            for i in 0..size{
+        } else {
+            for i in 0..size {
                 self.data[self.counter] = slice[i];
                 self.counter += 1;
             }
@@ -127,28 +120,28 @@ impl<T: Default+ Copy, const N: usize> FixedArray<T, N> {
         let size = array.len();
         let free_size = N - self.counter;
         if size <= 0 {
-            std_error("slice has no element");
-            return Err(FixeArrayError::ElementNotFound)
+            LOG.error("slice has no element");
+            return Err(FixeArrayError::ElementNotFound);
         }
 
-        if size > N{
-            std_error("slice size is bigger that size of array, can`t add all elements");
-            return Err(FixeArrayError::OutOfTheBounds)
+        if size > N {
+            LOG.error("slice size is bigger that size of array, can`t add all elements");
+            return Err(FixeArrayError::OutOfTheBounds);
         }
 
         if size > free_size {
-            std_error("capacity of array would be exceeted, try to delete old data in array and continue");
+            LOG.error(
+                "capacity of array would be exceeted, try to delete old data in array and continue",
+            );
             return Err(FixeArrayError::FullCapacity);
-        }
-        else {
-            for i in 0..free_size{
+        } else {
+            for i in 0..free_size {
                 self.data[self.counter] = array.data[i];
                 self.counter += 1;
             }
             Ok(())
         }
     }
-
 }
 pub struct ByteConverter {
     // len of seq of bytes. Defined by user at the start
@@ -158,17 +151,15 @@ pub struct ByteConverter {
     // all converted values in current write restricted by window_siez
     buf_current: FixedArray<i32, 255>,
     // saving uncompleted bytes from write call. There sould be only up to 3 bytes => 3 * 8 = 24
-    buf_remainder: FixedArray<u8, 4>, 
+    buf_remainder: FixedArray<u8, 4>,
     // are we using big or little endian order, default is big (true)
     litle_endian: bool,
     // sum of all input i32 values. It is convinient to count it while converting input
     sum: i32, // remove pub TODO
 }
 
-
 impl ByteConverter {
-    
-    pub fn init(window_size: usize) -> ByteConverter{
+    pub fn init(window_size: usize) -> ByteConverter {
         if window_size > 0 {
             ByteConverter {
                 window_size: window_size,
@@ -178,9 +169,8 @@ impl ByteConverter {
                 litle_endian: false,
                 sum: 0,
             }
-        }
-        else {
-            std_warn("please use real windo_size for input. Using default value = 3");
+        } else {
+            LOG.warn("please use real windo_size for input. Using default value = 3");
             ByteConverter {
                 window_size: 3,
                 buf_last: FixedArray::<i32, 255>::new(),
@@ -193,7 +183,7 @@ impl ByteConverter {
     }
 
     pub fn get_window_size(&self) -> usize {
-       self.window_size * 4
+        self.window_size * 4
     }
 
     pub fn get_sum(&self) -> &i32 {
@@ -204,7 +194,7 @@ impl ByteConverter {
         &self.buf_current
     }
 
-    pub fn set_sum(&mut self, value : i32) {
+    pub fn set_sum(&mut self, value: i32) {
         self.sum = value;
     }
 
@@ -267,11 +257,11 @@ impl ByteConverter {
                         _ = r_byte.extend_by_slice(sec_part);
                         return Some(r_byte);
                     } else {
-                        std_warn("cannot happend, because we are checking buf input at the start of conversion");
+                        LOG.warn("cannot happend, because we are checking buf input at the start of conversion");
                         None
                     }
                 } else {
-                    std_error("could not get 1 index of buf_remainder");
+                    LOG.error("could not get 1 index of buf_remainder");
                     None
                 }
             }
@@ -283,11 +273,11 @@ impl ByteConverter {
                         _ = r_byte.extend_by_slice(sec_part);
                         return Some(r_byte);
                     } else {
-                        std_warn("cannot happend, because we are checking buf input at the start of conversion");
+                        LOG.warn("cannot happend, because we are checking buf input at the start of conversion");
                         None
                     }
                 } else {
-                    std_error("could not get 1 index of buf_remainder");
+                    LOG.error("could not get 1 index of buf_remainder");
                     None
                 }
             }
@@ -299,16 +289,16 @@ impl ByteConverter {
                         _ = r_byte.extend_by_slice(sec_part);
                         return Some(r_byte);
                     } else {
-                        std_warn("cannot happend, because we are checking buf input at the start of conversion");
+                        LOG.warn("cannot happend, because we are checking buf input at the start of conversion");
                         None
                     }
                 } else {
-                    std_error("could not get 1 index of buf_remainder");
+                    LOG.error("could not get 1 index of buf_remainder");
                     None
                 }
             }
             _ => {
-                std_error("could get together from byte sequences i32 value");
+                LOG.error("could get together from byte sequences i32 value");
                 None
             }
         }
@@ -318,13 +308,13 @@ impl ByteConverter {
     // in this fn we are taking current write and save it into buf_currenct
     // For now skipping returning number of succesfully converted bytes.
     pub fn convert_bytes_to_i32(&mut self, buf: &[u8]) {
-        // split bytes sequence by 4        
+        // split bytes sequence by 4
 
         // basically we need only 8 bytes for mean(), but for now we don`t support less numbers in
         // first call then window_size. Otherwise we would need to adjust old value adding
         if self.buf_remainder.is_empty() {
             if buf.len() < 8 {
-                std_warn("first call doesn`t have enough values for making statistics");
+                LOG.warn("first call doesn`t have enough values for making statistics");
             } else {
                 if buf[0] > buf[3] {
                     // if there are more values on the input it will be skipped
@@ -357,7 +347,7 @@ impl ByteConverter {
                     self.read_big_endians(buf, 4 - self.buf_remainder.len());
                 }
             } else {
-                std_error("could not get together i32 value from previous and next write call");
+                LOG.error("could not get together i32 value from previous and next write call");
             }
             // at the end clear buf_remaining to be ready for next write iteration
             self.buf_remainder.clear();
@@ -372,19 +362,18 @@ impl ByteConverter {
 
             // check if buf_last has enought values to fill a gap in buf_current
             if self.buf_last.len() >= gap_len {
-                if let Some(extend_data) = self.buf_last.get(0..gap_len){
+                if let Some(extend_data) = self.buf_last.get(0..gap_len) {
                     _ = self.buf_current.extend_by_slice(extend_data);
                     // need to also add sum of values
                     self.sum += self.buf_last.data[0..gap_len].iter().sum::<i32>();
-                  
                 }
             } else {
                 // add at least what we have and warn that we don`t have a full window_size`
                 _ = self.buf_current.extend_by_array(&self.buf_last);
                 // need to also add sum of values
                 self.sum += self.buf_last.iter().sum::<i32>();
-                std_warn(
-                    "buf_current doesn`t fill window_size constraint, either from last write call."
+                LOG.warn(
+                    "buf_current doesn`t fill window_size constraint, either from last write call.",
                 )
             }
         }
@@ -393,11 +382,10 @@ impl ByteConverter {
         // need to store only full window_size
         if self.buf_last.is_empty() {
             self.buf_last.clear();
-             
-            _ = self.buf_last
-                .extend_by_array(&self.buf_current);
+
+            _ = self.buf_last.extend_by_array(&self.buf_current);
         }
         // compute statistics staff
-        std_info("convertion of byte sequence into i32 values is complete");
+        LOG.info("convertion of byte sequence into i32 values is complete");
     }
 }
